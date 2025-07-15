@@ -15,6 +15,6 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /app/server /server
 COPY templates /templates
-COPY nuget-server-config-gcp.json /
+COPY nuget-server-config-local.json /
 
 CMD ["/server"]
