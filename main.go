@@ -31,7 +31,7 @@ func main() {
 		// Local Varibles
 		var err error                                                          // Reusable error
 		apiKey := ""                                                           // APIKey (populated if found in headers)
-		accessLevel := accessDenied                                            // Access Level (defaults to denied)
+		accessLevel := accessReadWrite                                           // Access Level (defaults to denied)
 		altFilePath := path.Join(`/F`, server.URL.Path, `api`, `v2`, `browse`) // Alternative API called by client
 
 		// Create new statusWriter
@@ -59,7 +59,7 @@ func main() {
 				goto End
 			}
 		}
-
+		
 		// Process Headers looking for API key (can't access direct as case may not match)
 		for name, headers := range r.Header {
 			// Grab ApiKey as it passes

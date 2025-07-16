@@ -181,14 +181,8 @@ type NugetPackageEntry struct {
 		} `xml:"d:DownloadCount"`
 		GalleryDetailsURL string `xml:"d:GalleryDetailsUrl"`
 		IconURL           string `xml:"d:IconUrl"`
-		IsLatestVersion   struct {
-			Value bool   `xml:",chardata"`
-			Type  string `xml:"m:type,attr"`
-		} `xml:"d:IsLatestVersion"`
-		IsAbsoluteLatestVersion struct {
-			Value bool   `xml:",chardata"`
-			Type  string `xml:"m:type,attr"`
-		} `xml:"d:IsAbsoluteLatestVersion"`
+		IsLatestVersion   BoolProp `xml:"d:IsLatestVersion"`
+		IsAbsoluteLatestVersion BoolProp `xml:"d:IsAbsoluteLatestVersion"`
 		LastEdited struct {
 			Value string `xml:",chardata"`
 			Type  string `xml:"m:type,attr"`
@@ -241,6 +235,11 @@ type NugetPackageEntry struct {
 		} `xml:"d:MinClientVersion"`
 		Language string `xml:"d:Language"`
 	} `xml:"m:properties"`
+}
+
+type BoolProp struct {
+	Value bool   `xml:",chardata"`
+	Type  string `xml:"m:type,attr"`
 }
 
 // NewNugetPackageEntry returns a semi populated struct for a Nuget Packages Entry

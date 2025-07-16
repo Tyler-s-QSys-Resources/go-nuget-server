@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	nuspec "github.com/soloworks/go-nuspec"
 )
@@ -139,6 +138,23 @@ func (fs *fileStoreLocal) LoadPackage(fp string) error {
 			p.Properties.PackageHashAlgorithm = `SHA512`
 			p.Properties.PackageSize.Value = len(content)
 			p.Properties.PackageSize.Type = "Edm.Int64"
+			// Determine if this is the latest version for this package ID
+			latest := true
+			for _, existing := range fs.packages {
+				if existing.ID == p.ID {
+					// Lexicographic comparison — works for consistent version formatting
+					if existing.Properties.Version > p.Properties.Version {
+						latest = false
+						break
+					}
+				}
+			}
+
+			// Assign using Property[bool]
+			p.Properties.IsLatestVersion = BoolProp{Value: latest, Type: "Edm.Boolean"}
+			p.Properties.IsAbsoluteLatestVersion = BoolProp{Value: latest, Type: "Edm.Boolean"}
+
+
 			// Insert this into the array in order
 			index := sort.Search(len(fs.packages), func(i int) bool { return fs.packages[i].Filename() > p.Filename() })
 			x := NugetPackageEntry{}
@@ -163,10 +179,10 @@ func (fs *fileStoreLocal) RemovePackage(fn string) {
 }
 
 func (fs *fileStoreLocal) StorePackage(pkg []byte) (bool, error) {
+	/*
 		// Test for folder, if present bail, if not make it
-		// Parse nuspec from pkg to get ID and Version
+		// Fixme: Broke this to get to compile
 		packagePath := filepath.Join(c.FileStore.RepoDIR, strings.ToLower(nsf.Meta.ID), nsf.Meta.Version)
-/*
 		if _, err := os.Stat(packagePath); !os.IsNotExist(err) {
 			// Path already exists
 			w.WriteHeader(http.StatusConflict)
@@ -179,6 +195,7 @@ func (fs *fileStoreLocal) StorePackage(pkg []byte) (bool, error) {
 			return
 		}
 		log.Println("Creating Directory: ", packagePath)
+
 		// Dump the .nupkg file in the same directory
 		err = ioutil.WriteFile(filepath.Join(packagePath, strings.ToLower(nsf.Meta.ID)+"."+nsf.Meta.Version+".nupkg"), body, os.ModePerm)
 		if err != nil {
@@ -195,7 +212,54 @@ func (fs *fileStoreLocal) GetPackageEntry(id string, ver string) (*NugetPackageE
 
 func (fs *fileStoreLocal) GetPackageFeedEntries(id string, startAfter string, max int) ([]*NugetPackageEntry, bool, error) {
 
-	return nil, false, nil
+	var entries []*NugetPackageEntry
+	var startCollecting bool = (startAfter == "")
+	var count int
+
+	for _, p := range fs.packages {
+		// Filter by package ID if provided
+		if id != "" && p.ID != id {
+			continue
+		}
+
+		// Skip until we reach the `startAfter` entry
+		if !startCollecting {
+			if p.Filename() == startAfter {
+				startCollecting = true
+			}
+			continue
+		}
+
+		// Add the entry
+		entries = append(entries, p)
+		count++
+
+		// Stop if we’ve reached the max requested
+		if max > 0 && count >= max {
+			break
+		}
+	}
+
+	// Determine if there are more entries after this page
+	hasMore := false
+	if max > 0 && (count == max) && len(entries) > 0 {
+		last := entries[len(entries)-1].Filename()
+		for _, p := range fs.packages {
+			if id != "" && p.ID != id {
+				continue
+			}
+			if p.Filename() == last {
+				startCollecting = true
+				continue
+			}
+			if startCollecting {
+				hasMore = true
+				break
+			}
+		}
+	}
+
+	return entries, hasMore, nil
 }
 
 func (fs *fileStoreLocal) GetPackageFile(id string, ver string) ([]byte, string, error) {
@@ -209,6 +273,5 @@ func (fs *fileStoreLocal) GetFile(f string) ([]byte, string, error) {
 
 func (fs *fileStoreLocal) GetAccessLevel(key string) (access, error) {
 
-	//return accessReadOnly, nil
 	return accessReadWrite, nil
 }

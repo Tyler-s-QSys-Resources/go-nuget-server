@@ -16,7 +16,6 @@ RUN apk add --no-cache ca-certificates
 COPY --from=builder /app/server /server
 COPY templates /templates
 COPY nuget-server-config-local.json /
-COPY nuspec.go /git 
 
 EXPOSE 80
 CMD ["/server"]
