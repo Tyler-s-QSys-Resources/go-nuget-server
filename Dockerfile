@@ -8,13 +8,15 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=readonly -v -o server
+RUN CGO_ENABLED=0 GOOS=linux go build -v -o server
 
 FROM alpine:3.10
 RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /app/server /server
 COPY templates /templates
-COPY nuget-server-config-local.json /nuget-server-config-gcp.json
+COPY nuget-server-config-local.json /
+COPY nuspec.go /git 
 
+EXPOSE 80
 CMD ["/server"]

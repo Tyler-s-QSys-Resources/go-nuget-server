@@ -20,7 +20,7 @@ var server *Server
 
 func init() {
 	// Loan config and init server
-	server = InitServer("nuget-server-config-gcp.json")
+	server = InitServer("nuget-server-config-local.json")
 }
 
 func main() {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	nuspec "github.com/soloworks/go-nuspec"
 )
@@ -162,10 +163,10 @@ func (fs *fileStoreLocal) RemovePackage(fn string) {
 }
 
 func (fs *fileStoreLocal) StorePackage(pkg []byte) (bool, error) {
-	/*
 		// Test for folder, if present bail, if not make it
-		// Fixme: Broke this to get to compile
+		// Parse nuspec from pkg to get ID and Version
 		packagePath := filepath.Join(c.FileStore.RepoDIR, strings.ToLower(nsf.Meta.ID), nsf.Meta.Version)
+/*
 		if _, err := os.Stat(packagePath); !os.IsNotExist(err) {
 			// Path already exists
 			w.WriteHeader(http.StatusConflict)
@@ -178,7 +179,6 @@ func (fs *fileStoreLocal) StorePackage(pkg []byte) (bool, error) {
 			return
 		}
 		log.Println("Creating Directory: ", packagePath)
-
 		// Dump the .nupkg file in the same directory
 		err = ioutil.WriteFile(filepath.Join(packagePath, strings.ToLower(nsf.Meta.ID)+"."+nsf.Meta.Version+".nupkg"), body, os.ModePerm)
 		if err != nil {
@@ -209,5 +209,6 @@ func (fs *fileStoreLocal) GetFile(f string) ([]byte, string, error) {
 
 func (fs *fileStoreLocal) GetAccessLevel(key string) (access, error) {
 
-	return accessDenied, nil
+	//return accessReadOnly, nil
+	return accessReadWrite, nil
 }

@@ -3,8 +3,7 @@
     "filestore": {
         "type": "local",
         "local-directory": "./FileStore",
-        "api-keys": {
-            "read-only": [],
+        "api-keys": {            "read-only": [],
             "read-write": [
                 "123-456"
             ]
