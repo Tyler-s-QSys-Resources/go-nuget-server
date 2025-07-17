@@ -401,15 +401,16 @@ func uploadPackage(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// Store the file
-			exists, err := server.fs.StorePackage(pkgFile)
+			_, err = server.fs.StorePackage(pkgFile)
 			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
+				if strings.Contains(err.Error(), "already exists") {
+					w.WriteHeader(http.StatusConflict)
+				} else {
+					w.WriteHeader(http.StatusInternalServerError)
+				}
 				return
 			}
-			if exists == true {
-				w.WriteHeader(http.StatusConflict)
-				return
-			}
+
 			w.WriteHeader(http.StatusCreated)
 		}
 	}

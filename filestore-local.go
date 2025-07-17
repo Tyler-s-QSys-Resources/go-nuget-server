@@ -192,30 +192,68 @@ func (fs *fileStoreLocal) RemovePackage(fn string) {
 }
 
 func (fs *fileStoreLocal) StorePackage(pkg []byte) (bool, error) {
-	/*
-		// Test for folder, if present bail, if not make it
-		// Fixme: Broke this to get to compile
-		packagePath := filepath.Join(c.FileStore.RepoDIR, strings.ToLower(nsf.Meta.ID), nsf.Meta.Version)
-		if _, err := os.Stat(packagePath); !os.IsNotExist(err) {
-			// Path already exists
-			w.WriteHeader(http.StatusConflict)
-			return
-		}
-		err = os.MkdirAll(packagePath, os.ModePerm)
-		if err != nil {
-			println(err.Error())
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		log.Println("Creating Directory: ", packagePath)
+	// Open nupkg as zip reader
+	zipReader, err := zip.NewReader(bytes.NewReader(pkg), int64(len(pkg)))
+	if err != nil {
+		return false, fmt.Errorf("invalid nupkg file: %w", err)
+	}
 
-		// Dump the .nupkg file in the same directory
-		err = ioutil.WriteFile(filepath.Join(packagePath, strings.ToLower(nsf.Meta.ID)+"."+nsf.Meta.Version+".nupkg"), body, os.ModePerm)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}*/
-	return false, nil
+	var nsf *nuspec.NuSpec
+	// Find the .nuspec file
+	for _, zipFile := range zipReader.File {
+		if filepath.Ext(zipFile.Name) == ".nuspec" && filepath.Dir(zipFile.Name) == "." {
+			rc, err := zipFile.Open()
+			if err != nil {
+				return false, fmt.Errorf("error opening nuspec: %w", err)
+			}
+			defer rc.Close()
+
+			nuspecData, err := ioutil.ReadAll(rc)
+			if err != nil {
+				return false, fmt.Errorf("error reading nuspec: %w", err)
+			}
+
+			nsf, err = nuspec.FromBytes(nuspecData)
+			if err != nil {
+				return false, fmt.Errorf("error parsing nuspec: %w", err)
+			}
+			break
+		}
+	}
+
+	if nsf == nil {
+		return false, fmt.Errorf("nuspec file not found in package")
+	}
+
+	// Build the package path
+	id := strings.ToLower(nsf.Meta.ID)
+	version := nsf.Meta.Version
+	packageDir := filepath.Join(fs.rootDir, id, version)
+	nupkgFilename := fmt.Sprintf("%s.%s.nupkg", id, version)
+	nupkgPath := filepath.Join(packageDir, nupkgFilename)
+
+	// Check if already exists
+	if _, err := os.Stat(nupkgPath); err == nil {
+		return false, fmt.Errorf("package already exists: %s", nupkgPath)
+	}
+
+	// Create directory
+	if err := os.MkdirAll(packageDir, os.ModePerm); err != nil {
+		return false, fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Write the .nupkg file
+	if err := ioutil.WriteFile(nupkgPath, pkg, 0644); err != nil {
+		return false, fmt.Errorf("failed to write nupkg: %w", err)
+	}
+
+	// Load it into memory
+	if err := fs.LoadPackage(nupkgPath); err != nil {
+		return false, fmt.Errorf("failed to load package: %w", err)
+	}
+
+	log.Printf("Package stored: %s %s", id, version)
+	return true, nil
 }
 
 func (fs *fileStoreLocal) GetPackageEntry(id string, ver string) (*NugetPackageEntry, error) {
