@@ -1,5 +1,5 @@
 {
-    "host-url": "http://0.0.0.0/q-sys-community-plugins/",
+    "host-url": "http://127.0.0.1/aligned-vision-group-plugins/",
     "filestore": {
         "type": "local",
         "local-directory": "./FileStore",

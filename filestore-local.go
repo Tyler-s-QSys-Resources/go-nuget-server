@@ -10,6 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"fmt"
+	"mime"
 
 	nuspec "github.com/soloworks/go-nuspec"
 )
@@ -17,12 +20,15 @@ import (
 type fileStoreLocal struct {
 	rootDir  string
 	packages []*NugetPackageEntry
+	server   *Server // Add this
 }
+
 
 func (fs *fileStoreLocal) Init(s *Server) error {
 
 	// Set the Repo Path
 	fs.rootDir = s.config.FileStore.RepoDIR
+	fs.server = s
 
 	// Create the package folder if requried
 	if _, err := os.Stat(fs.rootDir); os.IsNotExist(err) {
@@ -123,9 +129,16 @@ func (fs *fileStoreLocal) LoadPackage(fp string) error {
 			}
 			// Read into NuspecFile structure
 			nsf, err := nuspec.FromBytes(b)
+			if err != nil {
+				log.Println("Error parsing nuspec:", err)
+				return err
+			}
 
 			// Read Entry into memory
 			p = NewNugetPackageEntry(nsf)
+
+
+			p.Content.Src = fs.server.URL.String() + "nupkg/" + nsf.Meta.ID + "/" + nsf.Meta.Version
 
 			// Set Updated to match file
 			p.Properties.Created.Value = f.ModTime().Format(zuluTimeLayout)
@@ -206,8 +219,38 @@ func (fs *fileStoreLocal) StorePackage(pkg []byte) (bool, error) {
 }
 
 func (fs *fileStoreLocal) GetPackageEntry(id string, ver string) (*NugetPackageEntry, error) {
+	var match *NugetPackageEntry
+	var latestVer string
+	totalDownloads := 0
 
-	return nil, nil
+	for _, p := range fs.packages {
+		if strings.EqualFold(p.Properties.ID, id) {
+			// Track latest version for this ID
+			if latestVer == "" || p.Properties.Version > latestVer {
+				latestVer = p.Properties.Version
+			}
+
+			// Track total downloads for this ID
+			totalDownloads += p.Properties.VersionDownloadCount.Value
+
+			// Match target version
+			if p.Properties.Version == ver {
+				match = p
+			}
+		}
+	}
+
+	// If not found, return error to trigger 404 upstream
+	if match == nil {
+		return nil, fmt.Errorf("package not found")
+	}
+
+	// Update values like GCP does
+	match.Properties.DownloadCount.Value = totalDownloads
+	match.Properties.IsLatestVersion.Value = latestVer == ver
+	match.Properties.IsAbsoluteLatestVersion.Value = latestVer == ver
+
+	return match, nil
 }
 
 func (fs *fileStoreLocal) GetPackageFeedEntries(id string, startAfter string, max int) ([]*NugetPackageEntry, bool, error) {
@@ -263,12 +306,37 @@ func (fs *fileStoreLocal) GetPackageFeedEntries(id string, startAfter string, ma
 }
 
 func (fs *fileStoreLocal) GetPackageFile(id string, ver string) ([]byte, string, error) {
+	// Construct full path to nupkg file
+	filename := filepath.Join(fs.rootDir, id, ver, fmt.Sprintf("%s.%s.nupkg", id, ver))
 
-	return nil, "", nil
+	content, err := ioutil.ReadFile(filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, "", ErrFileNotFound
+		}
+		return nil, "", err
+	}
+
+	return content, "application/octet-stream", nil
 }
-func (fs *fileStoreLocal) GetFile(f string) ([]byte, string, error) {
 
-	return nil, "", nil
+
+
+func (fs *fileStoreLocal) GetFile(f string) ([]byte, string, error) {
+	fullPath := filepath.Join(fs.rootDir, f)
+
+	data, err := ioutil.ReadFile(fullPath)
+	if err != nil {
+		return nil, "", ErrFileNotFound
+	}
+
+	// Detect content type from extension
+	contentType := mime.TypeByExtension(filepath.Ext(fullPath))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	return data, contentType, nil
 }
 
 func (fs *fileStoreLocal) GetAccessLevel(key string) (access, error) {

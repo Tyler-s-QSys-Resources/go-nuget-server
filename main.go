@@ -78,9 +78,18 @@ func main() {
 			goto End
 		}
 
+		log.Println("Route check — r.URL.String():", r.URL.String())
+		log.Println("Route check — server.URL.Path:", server.URL.Path)
+
+
 		// Restricted Routes
 		switch r.Method {
 		case http.MethodGet:
+			log.Println("Routing Debug:")
+			log.Println("→ r.URL.Path =", r.URL.Path)
+			log.Println("→ server.URL.Path =", server.URL.Path)
+			log.Println("→ Expecting prefix:", server.URL.Path+"nupkg")
+
 			// Perform Routing
 			switch {
 			case strings.HasPrefix(r.URL.String(), server.URL.Path+`Packages`):
@@ -208,6 +217,7 @@ func serveStaticFile(w http.ResponseWriter, r *http.Request, fn string) {
 
 func servePackageFile(w http.ResponseWriter, r *http.Request) {
 
+	log.Println("Serving Package File")
 	// get the last two parts of the URL
 	x := strings.Split(r.URL.String(), `/`)
 
