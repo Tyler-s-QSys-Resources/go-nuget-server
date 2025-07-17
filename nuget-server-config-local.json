@@ -5,7 +5,9 @@
         "local-directory": "./FileStore",
         "api-keys": {
             "read-only": [],
-            "read-write": []
+            "read-write": [
+                "Next5Wind!"
+            ]
         }
     }
 }

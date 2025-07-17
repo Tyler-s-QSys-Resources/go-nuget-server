@@ -303,7 +303,7 @@ func NewNugetPackageEntry(nsf *nuspec.NuSpec) *NugetPackageEntry {
 	if e.Properties.LicenseReportURL.Value == "" {
 		e.Properties.LicenseReportURL.Null = true
 	}
-	e.Properties.ReportAbuseURL = "http://soloworks.co.uk/"
+	e.Properties.ReportAbuseURL = "https://alignedvisiongroup.com/"
 	e.Properties.Tags = nsf.Meta.Tags
 	e.Properties.Title = nsf.Meta.Title
 	e.Properties.Language = "en-US"

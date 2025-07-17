@@ -31,7 +31,7 @@ func main() {
 		// Local Varibles
 		var err error                                                          // Reusable error
 		apiKey := ""                                                           // APIKey (populated if found in headers)
-		accessLevel := accessReadWrite                                           // Access Level (defaults to denied)
+		accessLevel := accessDenied                                          // Access Level (defaults to denied)
 		altFilePath := path.Join(`/F`, server.URL.Path, `api`, `v2`, `browse`) // Alternative API called by client
 
 		// Create new statusWriter

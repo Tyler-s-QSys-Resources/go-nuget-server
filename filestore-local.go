@@ -340,6 +340,34 @@ func (fs *fileStoreLocal) GetFile(f string) ([]byte, string, error) {
 }
 
 func (fs *fileStoreLocal) GetAccessLevel(key string) (access, error) {
+	cfg := fs.server.config.FileStore.APIKeys
 
-	return accessReadWrite, nil
+	// No keys defined — open server
+	if len(cfg.ReadOnly) == 0 && len(cfg.ReadWrite) == 0 {
+		return accessReadWrite, nil
+	}
+
+	// If any ReadOnly keys exist, all access requires a key
+	if len(cfg.ReadOnly) > 0 {
+		for _, k := range cfg.ReadWrite {
+			if k == key {
+				return accessReadWrite, nil
+			}
+		}
+		for _, k := range cfg.ReadOnly {
+			if k == key {
+				return accessReadOnly, nil
+			}
+		}
+		return accessDenied, fmt.Errorf("unauthorized")
+	}
+
+	// No ReadOnly keys, only ReadWrite keys: read is open, write requires a key
+	for _, k := range cfg.ReadWrite {
+		if k == key {
+			return accessReadWrite, nil
+		}
+	}
+	return accessReadOnly, nil
 }
+
