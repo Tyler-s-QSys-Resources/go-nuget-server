@@ -299,7 +299,7 @@ func (fs *fileStoreLocal) GetPackageFeedEntries(id string, startAfter string, ma
 
 	for _, p := range fs.packages {
 		// Filter by package ID if provided
-		if id != "" && p.ID != id {
+		if id != "" && !strings.EqualFold(p.Properties.ID, id) {
 			continue
 		}
 

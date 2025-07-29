@@ -13,6 +13,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"encoding/json"
+	"time"
 )
 
 // Global Variables
@@ -88,13 +90,16 @@ func main() {
 			log.Println("Routing Debug:")
 			log.Println("→ r.URL.Path =", r.URL.Path)
 			log.Println("→ server.URL.Path =", server.URL.Path)
-			log.Println("→ Expecting prefix:", server.URL.Path+"nupkg")
 
 			// Perform Routing
 			switch {
 			case strings.HasPrefix(r.URL.String(), server.URL.Path+`Packages`):
 				servePackageFeed(&sw, r)
+			case strings.HasPrefix(r.URL.String(), server.URL.Path+`api/v2/Packages`):
+				log.Println("API V2 Packages Route")
+				servePackageFeed(&sw, r)
 			case strings.HasPrefix(r.URL.String(), server.URL.Path+`FindPackagesById`):
+				log.Println("FindPackagesById Route")
 				servePackageFeed(&sw, r)
 			case strings.HasPrefix(r.URL.String(), server.URL.Path+`nupkg`):
 				servePackageFile(&sw, r)
@@ -241,132 +246,231 @@ func servePackageFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func servePackageFeed(w http.ResponseWriter, r *http.Request) {
-
-	// Local Variables
 	var err error
 	var b []byte
 	var params = &packageParams{}
 	var isMore bool
+	var nf *NugetFeed
 
-	// Identify & process function parameters if they exist
-	if i := strings.Index(r.URL.Path, "("); i >= 0 { // Find opening bracket
-		if j := strings.Index(r.URL.Path[i:], ")"); j >= 0 { // Find closing bracket
-			params = newPackageParams(r.URL.Path[i+1 : i+j])
-		}
-	}
+	// Handle /FindPackagesById()?id='foo'
+	if strings.HasPrefix(r.URL.Path, server.URL.Path+`FindPackagesById`) {
+		id := strings.Trim(r.URL.Query().Get("id"), `'`)
+		log.Println("FindPackagesById ID Param:", id)
+		nf = NewNugetFeed("FindPackagesById", server.URL.String())
 
-	// For /Packages() Route
-	if strings.HasPrefix(r.URL.String(), server.URL.Path+`Packages`) {
-		// If params are populated then this is a single entry requests
-		if params.ID != "" && params.Version != "" {
-			// Find the entry required
-			npe, err := server.fs.GetPackageEntry(params.ID, params.Version)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-
-			// Convert it to Bytes
-			b = npe.ToBytes()
-		} else {
-			// Create a new Service Struct
-			nf := NewNugetFeed("Packages", server.URL.String())
-
-			// Split out weird filter formatting
-			s := strings.SplitAfterN(r.URL.Query().Get("$filter"), " ", 3)
-
-			// Create empty id string
-			id := ""
-
-			// If relevant, repopulate id with
-			if strings.TrimSpace(s[0]) == "tolower(Id)" && strings.TrimSpace(s[1]) == "eq" {
-				id = s[2]              // Assign to id
-				id = id[1 : len(id)-1] // Remove quote marks
-			}
-
-			// If $skiptoke is supplied, form it into a package name
-			startAfter := r.URL.Query().Get("$skiptoken")
-			startAfter = strings.ReplaceAll(startAfter, `'`, ``)
-			startAfter = strings.ReplaceAll(startAfter, `,`, `.`)
-
-			// Populate Packages from FileStore (100 max)
-			nf.Packages, isMore, err = server.fs.GetPackageFeedEntries(id, startAfter, 100)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-
-			// Add link to next page if relevant
-			if r.URL.Query().Get("$top") != "" && isMore {
-				// Get the current $top, cast to Int
-				t, err := strconv.Atoi(r.URL.Query().Get("$top"))
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-				// Get a copy of the request URL
-				u, err := url.Parse(r.URL.String())
-				u.Host = server.URL.Hostname()
-				u.Scheme = server.URL.Scheme
-				// Get working copy of Query
-				q := u.Query()
-				// Update Values
-				q.Del("$skip")
-				q.Set("$top", strconv.Itoa(t-100))
-				q.Set("$skiptoken", fmt.Sprintf(`'%s','%s'`, nf.Packages[len(nf.Packages)-1].Properties.ID, nf.Packages[len(nf.Packages)-1].Properties.Version))
-				//Re-assign
-				u.RawQuery = q.Encode()
-				// Get un-encoded URL
-				cleanURL, err := url.PathUnescape(u.String())
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-				log.Println()
-				// Add to feed
-				nf.Link = append(nf.Link, &NugetLink{
-					Rel:  "next",
-					Href: cleanURL,
-				})
-			}
-
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-
-			// Output Xml
-			b = nf.ToBytes()
-		}
-	} else if strings.HasPrefix(r.URL.String(), server.URL.Path+`FindPackagesById`) {
-
-		// Get ID from query
-		id := r.URL.Query().Get("id") // Get Value
-		id = id[1 : len(id)-1]        // Remove Quotes
-
-		// Create a new Service Struct
-		nf := NewNugetFeed("FindPackagesById", server.URL.String())
-
-		// Populate Packages from FileStore
+		log.Println("Calling GetPackageFeedEntries with ID:", id)
 		nf.Packages, isMore, err = server.fs.GetPackageFeedEntries(id, "", 100)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
-		// Output Xml
+		if r.URL.Query().Get("$format") == "json" {
+			renderJSONFeed(w, nf.Packages)
+			return
+		}
+
 		b = nf.ToBytes()
+	} else if strings.HasPrefix(r.URL.Path, server.URL.Path+`Packages`) ||
+		strings.HasPrefix(r.URL.Path, server.URL.Path+`api/v2/Packages`) {
+
+		if i := strings.Index(r.URL.Path, "("); i >= 0 {
+			if j := strings.Index(r.URL.Path[i:], ")"); j >= 0 {
+				params = newPackageParams(r.URL.Path[i+1 : i+j])
+			}
+		}
+
+		if params.ID != "" && params.Version != "" {
+			npe, err := server.fs.GetPackageEntry(params.ID, params.Version)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			if r.URL.Query().Get("$format") == "json" {
+				renderJSONFeed(w, []*NugetPackageEntry{npe})
+				return
+			}
+
+			b = npe.ToBytes()
+		} else {
+			// Package list feed
+			nf = NewNugetFeed("Packages", server.URL.String())
+
+			s := strings.SplitAfterN(r.URL.Query().Get("$filter"), " ", 3)
+			id := ""
+			if len(s) == 3 && strings.TrimSpace(s[0]) == "tolower(Id)" && strings.TrimSpace(s[1]) == "eq" {
+				id = s[2]
+				id = strings.Trim(id, `'`)
+			}
+
+			startAfter := strings.ReplaceAll(strings.ReplaceAll(r.URL.Query().Get("$skiptoken"), `'`, ``), `,`, `.`)
+
+			nf.Packages, isMore, err = server.fs.GetPackageFeedEntries(id, startAfter, 100)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			if r.URL.Query().Get("$top") != "" && isMore {
+				t, err := strconv.Atoi(r.URL.Query().Get("$top"))
+				if err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+
+				u, err := url.Parse(r.URL.String())
+				u.Host = server.URL.Hostname()
+				u.Scheme = server.URL.Scheme
+
+				q := u.Query()
+				q.Del("$skip")
+				q.Set("$top", strconv.Itoa(t-100))
+				q.Set("$skiptoken", fmt.Sprintf(`'%s','%s'`,
+					nf.Packages[len(nf.Packages)-1].Properties.ID,
+					nf.Packages[len(nf.Packages)-1].Properties.Version))
+				u.RawQuery = q.Encode()
+
+				cleanURL, err := url.PathUnescape(u.String())
+				if err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+
+				nf.Link = append(nf.Link, &NugetLink{
+					Rel:  "next",
+					Href: cleanURL,
+				})
+			}
+
+			if r.URL.Query().Get("$format") == "json" {
+				renderJSONFeed(w, nf.Packages)
+				return
+			}
+
+			b = nf.ToBytes()
+		}
 	}
 
 	if len(b) == 0 {
-		w.WriteHeader(404)
-	} else {
-		// Set Headers
-		w.Header().Set("Content-Type", "application/atom+xml;type=feed;charset=utf-8")
-		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
-		w.Write(b)
+		w.WriteHeader(http.StatusNotFound)
+		return
 	}
 
+	w.Header().Set("Content-Type", "application/atom+xml;type=feed;charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	w.Write(b)
+}
+
+func renderJSONFeed(w http.ResponseWriter, packages []*NugetPackageEntry) {
+	type Metadata struct {
+		ID          string `json:"id"`
+		URI         string `json:"uri"`
+		Type        string `json:"type"`
+		EditMedia   string `json:"edit_media"`
+		MediaSrc    string `json:"media_src"`
+		ContentType string `json:"content_type"`
+	}
+
+	type PackageJson struct {
+		Metadata        Metadata `json:"__metadata"`
+		ID              string   `json:"Id"`
+		Version         string   `json:"Version"`
+		Authors         string   `json:"Authors"`
+		Copyright       *string  `json:"Copyright"`
+		Description     string   `json:"Description"`
+		DownloadCount   string   `json:"DownloadCount"`
+		IconURL         *string  `json:"IconUrl"`
+		IsLatestVersion bool     `json:"IsLatestVersion"`
+		Published       string   `json:"Published"`
+		ProjectURL      string   `json:"ProjectUrl"`
+		ReleaseNotes    string   `json:"ReleaseNotes"`
+		Summary         string   `json:"Summary"`
+		Tags            *string  `json:"Tags"`
+		Title           string   `json:"Title"`
+	}
+
+	type ODataResponse struct {
+		D struct {
+			Results []PackageJson `json:"results"`
+		} `json:"d"`
+	}
+
+	resp := ODataResponse{}
+
+	for _, p := range packages {
+		// Construct URLs
+		packageID := url.PathEscape(p.Properties.ID)
+		packageVersion := url.PathEscape(p.Properties.Version)
+		baseURL := strings.TrimSuffix(server.URL.String(), "/")
+
+		editUri := fmt.Sprintf("%s/api/v2/Packages(Id='%s',Version='%s')", baseURL, packageID, packageVersion)
+		nupkgUrl := fmt.Sprintf("%s/nupkg/%s/%s", baseURL, packageID, packageVersion)
+		mediaUrl := fmt.Sprintf("%s/api/v2/Packages(Id='%s',Version='%s')/$value", baseURL, packageID, packageVersion)
+
+		// Format published date as /Date(milliseconds)/
+		publishedMillis := parseDateToEpochMillis(p.Properties.Published.Value)
+		published := fmt.Sprintf("/Date(%d)/", publishedMillis)
+
+		// Optional fields
+		var copyright *string
+		if !p.Properties.Copyright.Null {
+			copyright = &p.Properties.Copyright.Value
+		}
+
+		var iconURL *string
+		if p.Properties.IconURL != "" {
+			iconURL = &p.Properties.IconURL
+		}
+
+		var tags *string
+		if p.Properties.Tags != "" {
+			tags = &p.Properties.Tags
+		}
+
+		resp.D.Results = append(resp.D.Results, PackageJson{
+			Metadata: Metadata{
+				ID:          editUri,
+				URI:         editUri,
+				Type:        "MyGet.V2FeedPackage",
+				EditMedia:   mediaUrl,
+				MediaSrc:    nupkgUrl,
+				ContentType: "binary/octet-stream",
+			},
+			ID:              p.Properties.ID,
+			Version:         p.Properties.Version,
+			Authors:         p.Author.Name,
+			Copyright:       copyright,
+			Description:     p.Properties.Description,
+			DownloadCount:   strconv.Itoa(p.Properties.DownloadCount.Value),
+			IconURL:         iconURL,
+			IsLatestVersion: p.Properties.IsLatestVersion.Value,
+			Published:       published,
+			ProjectURL:      p.Properties.ProjectURL,
+			ReleaseNotes:    p.Properties.ReleaseNotes.Value,
+			Summary:         p.Summary.Text,
+			Tags:            tags,
+			Title:           p.Properties.Title,
+		})
+	}
+
+	jsonData, err := json.Marshal(resp)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(jsonData)))
+	w.Write(jsonData)
+}
+
+func parseDateToEpochMillis(dateStr string) int64 {
+	t, err := time.Parse(time.RFC3339, dateStr)
+	if err != nil {
+		return 0
+	}
+	return t.UnixNano() / int64(time.Millisecond)
 }
 
 func uploadPackage(w http.ResponseWriter, r *http.Request) {
