@@ -291,6 +291,7 @@ func NewNugetPackageEntry(nsf *nuspec.NuSpec) *NugetPackageEntry {
 	e.Properties.IsLatestVersion.Type = "Edm.Boolean"
 	e.Properties.IsAbsoluteLatestVersion.Type = "Edm.Boolean"
 	e.Properties.ProjectURL = nsf.Meta.ProjectURL
+	e.Properties.ReleaseNotes.Value = nsf.Meta.ReleaseNotes
 	if e.Properties.ReleaseNotes.Value == "" {
 		e.Properties.ReleaseNotes.Null = true
 	}
@@ -379,12 +380,22 @@ func newPackageParams(p string) *packageParams {
 
 	for strings.Contains(p, `=`) {
 		i := strings.Index(p, `=`)
+		if i == -1 || i == 0 {
+			break // malformed string, stop parsing
+		}
 		k := strings.TrimSpace(p[:i])
-		p = p[i:]
+		p = p[i+1:] // skip the '=' character
+
 		i = strings.Index(p, `'`)
+		if i == -1 {
+			break // malformed string
+		}
 		j := strings.Index(p[i+1:], `'`)
-		v := strings.TrimSpace(p[i+1 : j+i+1])
-		p = strings.TrimSpace(p[j+i+2:])
+		if j == -1 {
+			break // malformed string
+		}
+		v := strings.TrimSpace(p[i+1 : i+1+j])
+		p = strings.TrimSpace(p[i+1+j+1:])
 		if strings.HasPrefix(p, ",") {
 			p = p[1:]
 		}
@@ -394,7 +405,6 @@ func newPackageParams(p string) *packageParams {
 		case `Version`:
 			pp.Version = v
 		}
-		//output = append(output[:i], append([]byte(` /`), output[i+j+1:]...)...)
 	}
 
 	return &pp

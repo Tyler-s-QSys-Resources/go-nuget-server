@@ -20,6 +20,7 @@ type fileStore interface {
 	GetFile(f string) ([]byte, string, error)
 	GetPackageFile(id string, ver string) ([]byte, string, error)
 	GetAccessLevel(key string) (access, error)
+	UpdateCountsInMemory()
 }
 
 func extractPackage(pkg []byte) (*nuspec.NuSpec, map[string][]byte, error) {

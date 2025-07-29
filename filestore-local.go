@@ -8,11 +8,15 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"fmt"
 	"mime"
+	"encoding/json"
+	"sync"
+	"time"
 
 	nuspec "github.com/soloworks/go-nuspec"
 )
@@ -20,7 +24,10 @@ import (
 type fileStoreLocal struct {
 	rootDir  string
 	packages []*NugetPackageEntry
-	server   *Server // Add this
+	downloadCounts map[string]int
+	countsPath string
+	server   *Server
+	lock	sync.RWMutex
 }
 
 
@@ -30,14 +37,18 @@ func (fs *fileStoreLocal) Init(s *Server) error {
 	fs.rootDir = s.config.FileStore.RepoDIR
 	fs.server = s
 
-	// Create the package folder if requried
+	// Create the package folder if required
 	if _, err := os.Stat(fs.rootDir); os.IsNotExist(err) {
-		// Path already exists
 		log.Println("Creating Directory: ", fs.rootDir)
 		err := os.MkdirAll(fs.rootDir, os.ModePerm)
 		if err != nil {
 			return err
 		}
+	}
+
+	// Load persisted download counts
+	if err := fs.LoadDownloadCounts(); err != nil {
+		log.Printf("Warning: could not load download counts: %v", err)
 	}
 
 	// Refresh Packages
@@ -46,9 +57,74 @@ func (fs *fileStoreLocal) Init(s *Server) error {
 		return err
 	}
 
-	// Return repo
+	// Sync download counts into in-memory packages
+	for _, p := range fs.packages {
+		key := fmt.Sprintf("%s/%s", p.Properties.ID, p.Properties.Version)
+		if count, ok := fs.downloadCounts[key]; ok {
+			p.Properties.VersionDownloadCount.Value = count
+		} else {
+			p.Properties.VersionDownloadCount.Value = 0
+		}
+	}
+
 	return nil
 }
+
+func (fs *fileStoreLocal) LoadDownloadCounts() error {
+	fs.countsPath = filepath.Join(fs.rootDir, "downloads.json")
+	fs.downloadCounts = make(map[string]int)
+
+	data, err := ioutil.ReadFile(fs.countsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // No file yet; ignore
+		}
+		return err
+	}
+
+	return json.Unmarshal(data, &fs.downloadCounts)
+}
+
+func (fs *fileStoreLocal) SaveDownloadCounts() error {
+	data, err := json.MarshalIndent(fs.downloadCounts, "", "  ")
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(fs.countsPath, data, 0644)
+}
+
+func (fs *fileStoreLocal) UpdateCountsInMemory() {
+    for _, p := range fs.packages {
+        key := fmt.Sprintf("%s/%s", p.Properties.ID, p.Properties.Version)
+        if val, ok := fs.downloadCounts[key]; ok {
+            p.Properties.VersionDownloadCount.Value = val
+        } else {
+            p.Properties.VersionDownloadCount.Value = 0
+        }
+    }
+}
+
+func (fs *fileStoreLocal) RecalculateLatestVersions() {
+    // Map package ID to the highest version found
+    latestVersions := make(map[string]string)
+    
+    // First pass: find highest version per package ID
+    for _, p := range fs.packages {
+        currentLatest, exists := latestVersions[p.Properties.ID]
+        if !exists || compareVersions(p.Properties.Version, currentLatest) > 0 {
+            latestVersions[p.Properties.ID] = p.Properties.Version
+        }
+    }
+    
+    // Second pass: mark packages accordingly
+    for _, p := range fs.packages {
+        latestVersion := latestVersions[p.Properties.ID]
+        isLatest := compareVersions(p.Properties.Version, latestVersion) == 0
+        p.Properties.IsLatestVersion = BoolProp{Value: isLatest, Type: "Edm.Boolean"}
+        p.Properties.IsAbsoluteLatestVersion = BoolProp{Value: isLatest, Type: "Edm.Boolean"}
+    }
+}
+
 
 func (fs *fileStoreLocal) RefeshPackages() error {
 
@@ -60,17 +136,13 @@ func (fs *fileStoreLocal) RefeshPackages() error {
 
 	// Loop through all directories (first level is lowercase IDs)
 	for _, ID := range IDs {
-		// Check if this is a directory
 		if ID.IsDir() {
-			// Search files in directory (second level is versions)
 			Vers, err := ioutil.ReadDir(filepath.Join(fs.rootDir, ID.Name()))
 			if err != nil {
 				return err
 			}
 			for _, Ver := range Vers {
-				// Check if this is a directory
 				if Ver.IsDir() {
-					// Create full filepath
 					fp := filepath.Join(fs.rootDir, ID.Name(), Ver.Name(), ID.Name()+"."+Ver.Name()+".nupkg")
 					if _, err := os.Stat(fp); os.IsNotExist(err) {
 						log.Println("Not a nupkg directory")
@@ -87,14 +159,61 @@ func (fs *fileStoreLocal) RefeshPackages() error {
 		}
 	}
 
+	// Sync download counts into in-memory packages after loading all packages
+	for _, p := range fs.packages {
+		key := fmt.Sprintf("%s/%s", p.Properties.ID, p.Properties.Version)
+		if count, ok := fs.downloadCounts[key]; ok {
+			p.Properties.VersionDownloadCount.Value = count
+		} else {
+			p.Properties.VersionDownloadCount.Value = 0
+		}
+	}
+
+	// Recalculate latest version flags once after all packages are loaded
+    fs.RecalculateLatestVersions()
+
 	log.Printf("fs Loaded with %d Packages Found", len(fs.packages))
 
 	return nil
 }
 
-func (fs *fileStoreLocal) LoadPackage(fp string) error {
+func compareVersions(v1, v2 string) int {
+    parse := func(v string) []int {
+        parts := strings.Split(v, ".")
+        nums := make([]int, len(parts))
+        for i, p := range parts {
+            n := 0
+            fmt.Sscanf(p, "%d", &n)
+            nums[i] = n
+        }
+        return nums
+    }
+    a := parse(v1)
+    b := parse(v2)
+    maxLen := len(a)
+    if len(b) > maxLen {
+        maxLen = len(b)
+    }
+    for i := 0; i < maxLen; i++ {
+        var x, y int
+        if i < len(a) {
+            x = a[i]
+        }
+        if i < len(b) {
+            y = b[i]
+        }
+        if x < y {
+            return -1
+        }
+        if x > y {
+            return 1
+        }
+    }
+    return 0
+}
 
-	// Open and read in the file (Is a Zip file under the hood)
+func (fs *fileStoreLocal) LoadPackage(fp string) error {
+	// Read package file
 	content, err := ioutil.ReadFile(fp)
 	if err != nil {
 		return err
@@ -105,90 +224,82 @@ func (fs *fileStoreLocal) LoadPackage(fp string) error {
 		return err
 	}
 
-	// Set up a zipReader
-	zipReader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	// Extract .nuspec and file list using shared function
+	nsf, files, err := extractPackage(content)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to extract nupkg: %w", err)
 	}
 
-	// NugetPackage Object
-	var p *NugetPackageEntry
+	if nsf == nil {
+		return fmt.Errorf("nuspec not found in nupkg")
+	}
 
-	// Find and Process the .nuspec file
-	for _, zipFile := range zipReader.File {
-		// If this is the root .nuspec file read it into a NewspecFile structure
-		if filepath.Dir(zipFile.Name) == "." && filepath.Ext(zipFile.Name) == ".nuspec" {
-			// Marshall XML into Structure
-			rc, err := zipFile.Open()
-			if err != nil {
-				return err
-			}
-			b, err := ioutil.ReadAll(rc)
-			if err != nil {
-				return err
-			}
-			// Read into NuspecFile structure
-			nsf, err := nuspec.FromBytes(b)
-			if err != nil {
-				log.Println("Error parsing nuspec:", err)
-				return err
-			}
+	// Create NugetPackageEntry
+	p := NewNugetPackageEntry(nsf)
+	p.Content.Src = fs.server.URL.String() + "nupkg/" + nsf.Meta.ID + "/" + nsf.Meta.Version
 
-			// Read Entry into memory
-			p = NewNugetPackageEntry(nsf)
+	// Set metadata timestamps
+	modTime := f.ModTime().Format(zuluTimeLayout)
+	p.Properties.Created.Value = modTime
+	p.Properties.LastEdited.Value = modTime
+	p.Properties.Published.Value = modTime
+	p.Updated = modTime
 
+	// Set hash and size
+	hash := sha512.Sum512(content)
+	p.Properties.PackageHash = hex.EncodeToString(hash[:])
+	p.Properties.PackageHashAlgorithm = `SHA512`
+	p.Properties.PackageSize.Value = len(content)
+	p.Properties.PackageSize.Type = "Edm.Int64"
 
-			p.Content.Src = fs.server.URL.String() + "nupkg/" + nsf.Meta.ID + "/" + nsf.Meta.Version
+	// Insert into sorted list
+	index := sort.Search(len(fs.packages), func(i int) bool { return fs.packages[i].Filename() > p.Filename() })
+	x := NugetPackageEntry{}
+	fs.packages = append(fs.packages, &x)
+	copy(fs.packages[index+1:], fs.packages[index:])
+	fs.packages[index] = p
 
-			// Set Updated to match file
-			p.Properties.Created.Value = f.ModTime().Format(zuluTimeLayout)
-			p.Properties.LastEdited.Value = f.ModTime().Format(zuluTimeLayout)
-			p.Properties.Published.Value = f.ModTime().Format(zuluTimeLayout)
-			p.Updated = f.ModTime().Format(zuluTimeLayout)
-			// Get and Set file hash
-			h := sha512.Sum512(content)
-			p.Properties.PackageHash = hex.EncodeToString(h[:])
-			p.Properties.PackageHashAlgorithm = `SHA512`
-			p.Properties.PackageSize.Value = len(content)
-			p.Properties.PackageSize.Type = "Edm.Int64"
-			// Determine if this is the latest version for this package ID
-			latest := true
-			for _, existing := range fs.packages {
-				if existing.ID == p.ID {
-					// Lexicographic comparison — works for consistent version formatting
-					if existing.Properties.Version > p.Properties.Version {
-						latest = false
-						break
-					}
-				}
+	// Extract files that are inside "content/" in the nupkg to: <root>/<id>/<version>/content/
+	contentDir := filepath.Join(fs.rootDir, strings.ToLower(nsf.Meta.ID), nsf.Meta.Version, "content")
+
+	for filePath, data := range files {
+		if strings.HasPrefix(filePath, "content/") && !zipFileIsDirectory(filePath) {
+			// Remove all leading "content/" prefixes to avoid duplication
+			relPath := filePath
+			for strings.HasPrefix(relPath, "content/") {
+				relPath = strings.TrimPrefix(relPath, "content/")
 			}
 
-			// Assign using Property[bool]
-			p.Properties.IsLatestVersion = BoolProp{Value: latest, Type: "Edm.Boolean"}
-			p.Properties.IsAbsoluteLatestVersion = BoolProp{Value: latest, Type: "Edm.Boolean"}
+			targetPath := filepath.Join(contentDir, filepath.FromSlash(relPath))
 
-
-			// Insert this into the array in order
-			index := sort.Search(len(fs.packages), func(i int) bool { return fs.packages[i].Filename() > p.Filename() })
-			x := NugetPackageEntry{}
-			fs.packages = append(fs.packages, &x)
-			copy(fs.packages[index+1:], fs.packages[index:])
-			fs.packages[index] = p
+			if err := os.MkdirAll(filepath.Dir(targetPath), os.ModePerm); err != nil {
+				return fmt.Errorf("failed to create content directory: %w", err)
+			}
+			if err := ioutil.WriteFile(targetPath, data, 0644); err != nil {
+				return fmt.Errorf("failed to write content file: %w", err)
+			}
 		}
 	}
+
+	// After extracting content files successfully
+	fs.RecalculateLatestVersions()
 
 	return nil
 }
 
 func (fs *fileStoreLocal) RemovePackage(fn string) {
-	// Remove the Package from the Map
-	for i, p := range fs.packages {
-		if p.Filename() == fn {
-			fs.packages = append(fs.packages[:i], fs.packages[i+1:]...)
-		}
-	}
-	// Delete the contents directory
-	os.RemoveAll(filepath.Join(fs.rootDir, `content`, fn))
+    fs.lock.Lock()
+    defer fs.lock.Unlock()
+
+    for i, p := range fs.packages {
+        if p.Filename() == fn {
+            fs.packages = append(fs.packages[:i], fs.packages[i+1:]...)
+            break
+        }
+    }
+    os.RemoveAll(filepath.Join(fs.rootDir, `content`, fn))
+
+    fs.RecalculateLatestVersions()
 }
 
 func (fs *fileStoreLocal) StorePackage(pkg []byte) (bool, error) {
@@ -252,22 +363,45 @@ func (fs *fileStoreLocal) StorePackage(pkg []byte) (bool, error) {
 		return false, fmt.Errorf("failed to load package: %w", err)
 	}
 
+	// Extract content folder into the version directory
+	_, files, err := extractPackage(pkg)
+	if err != nil {
+		return false, fmt.Errorf("failed to extract package: %w", err)
+	}
+
+	for filePath, data := range files {
+		if strings.HasPrefix(filePath, "content/") && !zipFileIsDirectory(filePath) {
+			relPath := filePath
+			// Strip all leading "content/" prefixes to avoid nesting
+			for strings.HasPrefix(relPath, "content/") {
+				relPath = strings.TrimPrefix(relPath, "content/")
+			}
+
+			destPath := filepath.Join(packageDir, "content", filepath.FromSlash(relPath))
+			destDir := filepath.Dir(destPath)
+			if err := os.MkdirAll(destDir, os.ModePerm); err != nil {
+				return false, fmt.Errorf("failed to create directory %s: %w", destDir, err)
+			}
+			if err := ioutil.WriteFile(destPath, data, 0644); err != nil {
+				return false, fmt.Errorf("failed to write file %s: %w", destPath, err)
+			}
+		}
+	}
+
 	log.Printf("Package stored: %s %s", id, version)
 	return true, nil
 }
 
+func zipFileIsDirectory(name string) bool {
+	return strings.HasSuffix(name, "/") || path.Ext(name) == ""
+}
+
 func (fs *fileStoreLocal) GetPackageEntry(id string, ver string) (*NugetPackageEntry, error) {
 	var match *NugetPackageEntry
-	var latestVer string
 	totalDownloads := 0
 
 	for _, p := range fs.packages {
 		if strings.EqualFold(p.Properties.ID, id) {
-			// Track latest version for this ID
-			if latestVer == "" || p.Properties.Version > latestVer {
-				latestVer = p.Properties.Version
-			}
-
 			// Track total downloads for this ID
 			totalDownloads += p.Properties.VersionDownloadCount.Value
 
@@ -285,62 +419,78 @@ func (fs *fileStoreLocal) GetPackageEntry(id string, ver string) (*NugetPackageE
 
 	// Update values like GCP does
 	match.Properties.DownloadCount.Value = totalDownloads
-	match.Properties.IsLatestVersion.Value = latestVer == ver
-	match.Properties.IsAbsoluteLatestVersion.Value = latestVer == ver
 
 	return match, nil
 }
 
 func (fs *fileStoreLocal) GetPackageFeedEntries(id string, startAfter string, max int) ([]*NugetPackageEntry, bool, error) {
+	fs.lock.Lock()
+	defer fs.lock.Unlock()
 
-	var entries []*NugetPackageEntry
-	var startCollecting bool = (startAfter == "")
-	var count int
-
+	// Aggregate total downloads per package ID
+	downloadTotals := make(map[string]int)
 	for _, p := range fs.packages {
-		// Filter by package ID if provided
-		if id != "" && !strings.EqualFold(p.Properties.ID, id) {
-			continue
-		}
-
-		// Skip until we reach the `startAfter` entry
-		if !startCollecting {
-			if p.Filename() == startAfter {
-				startCollecting = true
-			}
-			continue
-		}
-
-		// Add the entry
-		entries = append(entries, p)
-		count++
-
-		// Stop if we’ve reached the max requested
-		if max > 0 && count >= max {
-			break
+		key := fmt.Sprintf("%s/%s", p.Properties.ID, p.Properties.Version)
+		if count, ok := fs.downloadCounts[key]; ok {
+			downloadTotals[p.Properties.ID] += count
 		}
 	}
 
-	// Determine if there are more entries after this page
-	hasMore := false
-	if max > 0 && (count == max) && len(entries) > 0 {
-		last := entries[len(entries)-1].Filename()
-		for _, p := range fs.packages {
-			if id != "" && p.ID != id {
-				continue
-			}
-			if p.Filename() == last {
-				startCollecting = true
-				continue
-			}
-			if startCollecting {
-				hasMore = true
+	var packages []*NugetPackageEntry
+	for _, p := range fs.packages {
+		// Update per-version download count
+		key := fmt.Sprintf("%s/%s", p.Properties.ID, p.Properties.Version)
+		if count, ok := fs.downloadCounts[key]; ok {
+			p.Properties.VersionDownloadCount.Value = count
+		} else {
+			p.Properties.VersionDownloadCount.Value = 0
+		}
+
+		// Set total download count per package ID
+		if total, ok := downloadTotals[p.Properties.ID]; ok {
+			p.Properties.DownloadCount.Value = total
+		} else {
+			p.Properties.DownloadCount.Value = 0
+		}
+
+		// Filter by ID if specified
+		if id != "" && p.Properties.ID != id {
+			continue
+		}
+
+		packages = append(packages, p)
+	}
+
+	// Sort packages by published date descending (newest first)
+	sort.Slice(packages, func(i, j int) bool {
+		ti, err1 := time.Parse(time.RFC3339, packages[i].Properties.Published.Value)
+		tj, err2 := time.Parse(time.RFC3339, packages[j].Properties.Published.Value)
+		if err1 != nil || err2 != nil {
+			// If parsing fails, keep original order
+			return false
+		}
+		return tj.Before(ti)
+	})
+
+	// Pagination logic
+	start := 0
+	if startAfter != "" {
+		for i, p := range packages {
+			if p.Properties.ID+"/"+p.Properties.Version == startAfter {
+				start = i + 1
 				break
 			}
 		}
 	}
 
-	return entries, hasMore, nil
+	end := start + max
+	if end > len(packages) {
+		end = len(packages)
+	}
+
+	hasMore := end < len(packages)
+
+	return packages[start:end], hasMore, nil
 }
 
 func (fs *fileStoreLocal) GetPackageFile(id string, ver string) ([]byte, string, error) {
@@ -353,6 +503,17 @@ func (fs *fileStoreLocal) GetPackageFile(id string, ver string) ([]byte, string,
 			return nil, "", ErrFileNotFound
 		}
 		return nil, "", err
+	}
+
+	key := fmt.Sprintf("%s/%s", id, ver)
+	fs.downloadCounts[key]++
+	_ = fs.SaveDownloadCounts() // Optional: handle error or debounce
+
+	for _, p := range fs.packages {
+		if strings.EqualFold(p.Properties.ID, id) && p.Properties.Version == ver {
+			p.Properties.VersionDownloadCount.Value = fs.downloadCounts[key]
+			break
+		}
 	}
 
 	return content, "application/octet-stream", nil

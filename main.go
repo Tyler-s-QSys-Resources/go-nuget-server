@@ -258,6 +258,9 @@ func servePackageFeed(w http.ResponseWriter, r *http.Request) {
 		log.Println("FindPackagesById ID Param:", id)
 		nf = NewNugetFeed("FindPackagesById", server.URL.String())
 
+		// Update counts before fetching packages
+		server.fs.UpdateCountsInMemory()
+
 		log.Println("Calling GetPackageFeedEntries with ID:", id)
 		nf.Packages, isMore, err = server.fs.GetPackageFeedEntries(id, "", 100)
 		if err != nil {
@@ -305,6 +308,9 @@ func servePackageFeed(w http.ResponseWriter, r *http.Request) {
 			}
 
 			startAfter := strings.ReplaceAll(strings.ReplaceAll(r.URL.Query().Get("$skiptoken"), `'`, ``), `,`, `.`)
+
+			// Update counts before fetching packages
+			server.fs.UpdateCountsInMemory()
 
 			nf.Packages, isMore, err = server.fs.GetPackageFeedEntries(id, startAfter, 100)
 			if err != nil {

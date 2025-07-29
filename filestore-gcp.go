@@ -55,6 +55,8 @@ func (fs *fileStoreGCP) Init(s *Server) error {
 	}
 	return nil
 }
+func (fs *fileStoreGCP) UpdateCountsInMemory() {
+}
 
 func (fs *fileStoreGCP) StorePackage(pkg []byte) (bool, error) {
 
