@@ -21,7 +21,7 @@ import (
 var server *Server
 
 func init() {
-	// Loan config and init server
+	// Load config and init server
 	server = InitServer("nuget-server-config-local.json")
 }
 
