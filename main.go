@@ -109,7 +109,7 @@ func main() {
 				serveStaticFile(&sw, r, r.URL.String()[len(altFilePath):])
 			}
 		case http.MethodPut:
-			// Bounce any request without write accees
+			log.Println("PUT found!")
 			if accessLevel != accessReadWrite {
 				sw.WriteHeader(http.StatusForbidden)
 				return
@@ -119,6 +119,9 @@ func main() {
 			switch {
 			case r.URL.String() == server.URL.Path:
 				// Process Request
+				uploadPackage(&sw, r)
+			case strings.HasPrefix(r.URL.String(), server.URL.Path+`api/v2/package/`):
+				log.Println("API V2 Upload Package")
 				uploadPackage(&sw, r)
 			default:
 				sw.WriteHeader(http.StatusNotFound)
