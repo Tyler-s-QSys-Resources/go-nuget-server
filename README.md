@@ -1,8 +1,7 @@
 # go-nuget-server
 
 [![MIT license](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.en.html)
-[![LinkedIn](https://img.shields.io/badge/Contact-LinkedIn-blue)](https://www.linkedin.com/company/soloworkslondon/)
-![](https://github.com/soloworks/go-nuget-server/workflows/Build/badge.svg)
+![](https://github.com/Tyler-s-QSys-Resources/go-nuget-server/workflows/Build/badge.svg)
 
 A minimal Nuget HTTP(s) server written in Go, primarily developed to serve the Q-Sys plugin platform.
 
@@ -20,6 +19,42 @@ All file and database functionality is abstracted into a FileStore interface whi
 
 Security is APIKey based only. Having no keys present will result in an open server, any ReadWrite keys present will require one to write but leave free read access. Any ReadOnly keys present will lock down all requests to require an API key. For Firebase this requires an entry in a collection called `Nuget-APIKeys` where the document name is the key and has at least one field called `Access` which can have the values `ReadOnly|ReadWrite`. 
 
+## Server Config
+
+Before building the project, make sure to configure the server type and server information.
+
+Open `main.go` and enter in the correct configuration file:
+```
+func init() {
+	// Load config and init server
+	server = InitServer("nuget-server-config-local.json")
+}
+```
+
+There are two type of servers supported `local|gcp`.
+
+If you are using the local server, open `nuget-server-config.json` and enter the correct information:
+```
+{
+    "host-url": "http://127.0.0.1/aligned-vision-group-plugins/", //The server URL, this must match the true IP address/hostname of the server
+    "filestore": {
+        "type": "local", //Local, do not change
+        "local-directory": "./FileStore", //The local directroy where packages will be stored
+        "api-keys": {
+            "read-only": [], //Read-only API keys, leave blank for all access
+            "read-write": [
+                "1234" //Read-write API keys, leave blank for all access
+            ]
+        }
+    }
+}
+```
+
+Next open `structures.go` and enter the correct `ReportAbuseURL` for your organization:
+```
+e.Properties.ReportAbuseURL = "https://alignedvisiongroup.com/"
+```
+
 ## Notes
 
 Nuget is strange. It doesn't seem to respect it's own protocols and APIs.
@@ -28,4 +63,9 @@ Irresepective of supplied paths, it will still occasionally try to find static f
 
 Documentation states `<iconURL>` is depreciated for `<icon>` which can look for files in package instead of over http. However trying to pack with latest Nuget.exe fails on this against the schema.
 
-## Acknowledgements
+The server will run on port 80 by default. Other ports are untested.
+
+NuGet does not support unsecure connections by default, therefore you must add a new source to the NuGet config file on your machine with the flag `allowInsecureConnections="true"`.
+```
+<add key="LocalTestSource" value="http://127.0.0.1/aligned-vision-group-plugins/" allowInsecureConnections="true" />
+```
