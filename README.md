@@ -36,7 +36,7 @@ There are two type of servers supported `local|gcp`.
 If you are using the local server, open `nuget-server-config.json` and enter the correct information:
 ```
 {
-    "host-url": "http://127.0.0.1/aligned-vision-group-plugins/", //The server URL, this must match the true IP address/hostname of the server
+    "host-url": "http://127.0.0.1/aligned-vision-group-plugins/", //The server URL, this must match the true IP address/hostname of the server -- make sure to add the port number if the server rus on a different port
     "filestore": {
         "type": "local", //Local, do not change
         "local-directory": "./FileStore", //The local directroy where packages will be stored
@@ -63,9 +63,9 @@ Irresepective of supplied paths, it will still occasionally try to find static f
 
 Documentation states `<iconURL>` is depreciated for `<icon>` which can look for files in package instead of over http. However trying to pack with latest Nuget.exe fails on this against the schema.
 
-The server will run on port 80 by default. Other ports are untested.
+The server will run on port 80 by default. Other ports must be set in the JSON `host-url` field.
 
-NuGet does not support unsecure connections by default, therefore you must add a new source to the NuGet config file on your machine with the flag `allowInsecureConnections="true"`.
+NuGet does not support insecure connections by default, therefore you must add a new source to the NuGet config file on your machine with the flag `allowInsecureConnections="true"`.
 ```
 <add key="LocalTestSource" value="http://127.0.0.1/aligned-vision-group-plugins/" allowInsecureConnections="true" />
 ```
