@@ -65,7 +65,7 @@ Documentation states `<iconURL>` is depreciated for `<icon>` which can look for 
 
 The server will run on port 80 by default. Other ports are untested.
 
-NuGet does not support unsecure connections by default, therefore you must add a new source to the NuGet config file on your machine with the flag `allowInsecureConnectons="true"`.
+NuGet does not support unsecure connections by default, therefore you must add a new source to the NuGet config file on your machine with the flag `allowInsecureConnections="true"`.
 ```
 <add key="LocalTestSource" value="http://127.0.0.1/aligned-vision-group-plugins/" allowInsecureConnections="true" />
 ```
