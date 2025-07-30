@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -164,14 +163,10 @@ func main() {
 	})
 
 	// Set port number (Defaults to 80)
-	p := ""
+	p := "" //DO not modify this value, if you need to use a different port, make sure it is set in the server.URL
 	// if port is set in URL string
 	if server.URL.Port() != "" {
 		p = ":" + server.URL.Port()
-	}
-	// If PORT EnvVar is set (Google Cloud Run environment)
-	if os.Getenv("PORT") != "" {
-		p = ":" + os.Getenv("PORT")
 	}
 
 	// Log and Start server
