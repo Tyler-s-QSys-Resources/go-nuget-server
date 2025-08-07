@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  nuget:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nuget
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - /FileStore:/FileStore
