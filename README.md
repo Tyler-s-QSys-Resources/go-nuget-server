@@ -13,15 +13,22 @@ Tested against:
 
 ## Getting Started
 
+Please use the following to clone into a folder named "nuget":
+```
+git clone https://github.com/Tyler-s-QSys-Resources/go-nuget-server.git nuget
+```
+The build may fail if the file has been cloned into a directory with "-"'s in its name, which is default for this repo. 
+
 This server is a Lightweight implementation, tested against the above Nuget client. Development started as a file system based store (using local storage), but this was abandoned for a GCP based system using Firebase and Google Run.
 
 All file and database functionality is abstracted into a FileStore interface which can be re-implemented as any other storage/database combination as desired. Just add a new switch, new filestore implementation and code away.
 
 Security is APIKey based only. Having no keys present will result in an open server, any ReadWrite keys present will require one to write but leave free read access. Any ReadOnly keys present will lock down all requests to require an API key. For Firebase this requires an entry in a collection called `Nuget-APIKeys` where the document name is the key and has at least one field called `Access` which can have the values `ReadOnly|ReadWrite`. 
 
+
 ## Server Config
 
-Before building the project, make sure to configure the server type and server information.
+Before building the project, make sure to configure the server type and server information. 
 
 Open `main.go` and enter in the correct configuration file:
 ```
